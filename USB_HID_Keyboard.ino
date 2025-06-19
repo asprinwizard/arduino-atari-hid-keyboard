@@ -389,11 +389,13 @@ void handle_joystick_button(int joystick_id, uint8_t value)
         if (value == MOUSE_BUTTON_STATUS_NONE || value == MOUSE_BUTTON_STATUS_LEFT) {
           // Send button release
           Joystick1.setButton(0, LOW);
+          joystick1_button_state = LOW;
         }
       } else {
         if (value == MOUSE_BUTTON_STATUS_BOTH || value == MOUSE_BUTTON_STATUS_RIGHT) {
           // Send button press
           Joystick1.setButton(0, HIGH);
+          joystick1_button_state = HIGH;
         }
       }
       break;
