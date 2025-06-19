@@ -1,4 +1,6 @@
 #include <Keyboard.h>
+#include <Mouse.h>
+#include <Joystick.h>
 /* 
 * -------------------------------------------------------------------------
 * Interface Atari ST Keyboard to USB HID Keyboard
@@ -15,7 +17,7 @@
 * be modified as some of the other Arduinos (eg. Uno) would do
 * -------------------------------------------------------------------------
 */
-//#define DEBUG
+#define DEBUG
 
 // ST keyboard reset pin
 const int ST_KB_RESET = 4;
@@ -58,6 +60,68 @@ const uint8_t ARD_F9 = 0xCA;
 const uint8_t ARD_F10 = 0xCB;
 const uint8_t ARD_F11 = 0xCC;
 const uint8_t ARD_F12 = 0xCD;
+
+/*
+const uint8_t MOUSE_BUTTON_STATUS_NONE = 120;
+const uint8_t MOUSE_BUTTON_STATUS_LEFT = 122;
+const uint8_t MOUSE_BUTTON_STATUS_RIGHT = 121;
+const uint8_t MOUSE_BUTTON_STATUS_BOTH = 123;
+
+const uint8_t MOUSE_DIR_LEFT = 1;
+const uint8_t MOUSE_DIR_RIGHT = 127;
+const uint8_t MOUSE_DIR_DOWN = 1;
+const uint8_t MOUSE_DIR_UP = 127;
+
+const uint8_t JOYSTICK_DIRECTION = 127;
+const uint8_t JOYSTICK_LEFT = 4;
+const uint8_t JOYSTICK_RIGHT = 8;
+const uint8_t JOYSTICK_DOWN = 2;
+const uint8_t JOYSTICK_UP = 1;
+const uint8_t JOYSTICK_UP_LEFT = 3;
+const uint8_t JOYSTICK_UP_RIGHT = 3;
+const uint8_t JOYSTICK_DOWN_LEFT = 3;
+const uint8_t JOYSTICK_DOWN_RIGHT = 3;
+*/
+
+const uint8_t MOUSE_BUTTON_STATUS_NONE = 0x78;
+const uint8_t MOUSE_BUTTON_STATUS_LEFT = 0x79;
+const uint8_t MOUSE_BUTTON_STATUS_RIGHT = 0x7a;
+const uint8_t MOUSE_BUTTON_STATUS_BOTH = 0x7b;
+
+const uint8_t MOUSE_DIR_LEFT = 0x01;
+const uint8_t MOUSE_DIR_RIGHT = 0x7f;
+const uint8_t MOUSE_DIR_DOWN = 0x01;
+const uint8_t MOUSE_DIR_UP = 0x7f;
+
+const uint8_t JOYSTICK_DIRECTION = 0x7f;
+const uint8_t JOYSTICK_LEFT = 0x04;
+const uint8_t JOYSTICK_RIGHT = 0x08;
+const uint8_t JOYSTICK_DOWN = 0x02;
+const uint8_t JOYSTICK_UP = 0x01;
+const uint8_t JOYSTICK_UP_LEFT = 0x03;
+const uint8_t JOYSTICK_UP_RIGHT = 0x03;
+const uint8_t JOYSTICK_DOWN_LEFT = 0x03;
+const uint8_t JOYSTICK_DOWN_RIGHT = 0x03;
+
+uint8_t mouse_button_actions[] = {
+  MOUSE_BUTTON_STATUS_NONE,
+  MOUSE_BUTTON_STATUS_LEFT,
+  MOUSE_BUTTON_STATUS_RIGHT,
+  MOUSE_BUTTON_STATUS_BOTH
+};
+
+const int MOUSE_STEP_BUTTON = 1;
+const int MOUSE_STEP_X = 2;
+const int MOUSE_STEP_Y = 3;
+
+const int JOYSTICK_1_ID = 1;
+const int JOYSTICK_2_ID = 2;
+
+int mouse_speed = 15;
+int mouse_step = 0;
+bool joystick_direction = false;
+int joystick1_button_state = LOW;
+int joystick2_button_state = LOW;
 
 // Keyboard auto-repeat
 static uint8_t last_make;    // Last make char
@@ -191,6 +255,21 @@ uint8_t scanCodes[] =
   0xE0  // NEnter
 };
 
+// Create two joystick objects
+Joystick_ Joystick1(JOYSTICK_1_ID,JOYSTICK_TYPE_GAMEPAD,
+  1, 0,                  // Button Count, Hat Switch Count
+  true, true, false,     // X and Y, but no Z Axis
+  false, false, false,   // No Rx, Ry, or Rz
+  false, false,          // No rudder or throttle
+  false, false, false);  // No accelerator, brake, or steering
+
+Joystick_ Joystick2(JOYSTICK_2_ID,JOYSTICK_TYPE_GAMEPAD,
+  1, 0,                  // Button Count, Hat Switch Count
+  true, true, false,     // X and Y, but no Z Axis
+  false, false, false,   // No Rx, Ry, or Rz
+  false, false,          // No rudder or throttle
+  false, false, false);  // No accelerator, brake, or steering
+
 void setup(void)
 {
   // Initialize keyboard:
@@ -216,7 +295,7 @@ void setup(void)
 void loop()
 {
   // Process incoming Atari keypresses
-  if (Serial1.available() > 0) process_keypress(Serial1.read());
+  if (Serial1.available() > 0) process_action(Serial1.read());
 
   // Handle keyboard auto-repeat
   auto_repeat();
@@ -233,6 +312,115 @@ void reset_st_keyboard(void)
   digitalWrite(ST_KB_RESET, LOW);
   delay(20);
   digitalWrite(ST_KB_RESET, HIGH);
+}
+
+void process_action(uint8_t action)
+{
+  Serial.print("action: ");
+  Serial.println(action & 0x7f);
+  //return;
+
+  // handle mouse actions
+  if (mouse_step == 0 && value_exists((action & 0x7f), mouse_button_actions, 4)) {
+    mouse_step = MOUSE_STEP_BUTTON;
+    process_mouse((action & 0x7f));
+  } else if (mouse_step == MOUSE_STEP_X || mouse_step == MOUSE_STEP_Y) {
+    process_mouse((action & 0x7f));
+  } else if ((action & 0x7f) == JOYSTICK_DIRECTION) {
+    joystick_direction = true;
+  } else if (joystick_direction) {  
+    process_joystick_direction((action & 0x7f));
+  // Otherwise it's a key
+  } else {
+    Serial.println("key is pressed");
+
+    process_keypress(action);
+  }
+}
+
+void process_mouse(uint8_t value)
+{
+  Serial.print("Mouse step: ");
+  Serial.println(mouse_step);
+  switch (mouse_step) {
+    case MOUSE_STEP_BUTTON:
+      Serial.print("Button status: ");
+      Serial.println(value);
+      if (value == MOUSE_BUTTON_STATUS_RIGHT || value == MOUSE_BUTTON_STATUS_BOTH) {
+        Serial.println("Send Joystick fire");
+        handle_joystick_button(1, value);
+      }
+      mouse_step = MOUSE_STEP_X;
+      break;
+
+    case MOUSE_STEP_X:
+      Serial.print("X movement: ");
+      Serial.println(value);
+      if (value == MOUSE_DIR_LEFT) {
+        Serial.println("Mouse left");
+        Mouse.move(-mouse_speed, 0);
+      } else if (value == MOUSE_DIR_RIGHT) {
+        Serial.println("Mouse right");
+        Mouse.move(mouse_speed, 0);
+      }
+      mouse_step = MOUSE_STEP_Y;
+      break;
+
+    case MOUSE_STEP_Y:
+      Serial.print("Y movement: ");
+      Serial.println(value);
+      if (value == MOUSE_DIR_DOWN) {
+        Serial.println("Mouse down");
+        Mouse.move(0, -mouse_speed);
+      } else if (value == MOUSE_DIR_UP) {
+        Serial.println("Mouse up");
+        Mouse.move(0, -mouse_speed);
+      }
+      mouse_step = 0;
+      break;
+  }
+}
+
+void handle_joystick_button(int joystick_id, uint8_t value)
+{
+  switch (joystick_id) {
+    case JOYSTICK_1_ID:
+      if (joystick1_button_state == HIGH) {
+        if (value == MOUSE_BUTTON_STATUS_NONE || value == MOUSE_BUTTON_STATUS_LEFT) {
+          // Send button release
+          Joystick1.setButton(0, LOW);
+        }
+      } else {
+        if (value == MOUSE_BUTTON_STATUS_BOTH || value == MOUSE_BUTTON_STATUS_RIGHT) {
+          // Send button press
+          Joystick1.setButton(0, HIGH);
+        }
+      }
+      break;
+  }
+}
+
+void process_joystick_direction(uint8_t value)
+{
+  switch (value) {
+    case JOYSTICK_LEFT:
+      Serial.println("Joystick left");
+      break;
+
+    case JOYSTICK_RIGHT:
+      Serial.println("Joystick right");
+      break;
+
+    case JOYSTICK_UP:
+      Serial.println("Joystick up");
+      break;
+
+    case JOYSTICK_DOWN:
+      Serial.println("Joystick down");
+      break;
+  }
+
+  joystick_direction = false;
 }
 
 // Process each keypress
@@ -386,7 +574,7 @@ void auto_repeat(void)
   static unsigned long last_repeat;
   static byte key_repeating;  // True if key being repeated
   
-  // Don't want to repeat modifiers  
+  // Don't want to repeat modifiers  l
   switch (last_make)
   {
     case ST_LEFT_CTRL:
@@ -415,3 +603,12 @@ void auto_repeat(void)
   }  
 }
 
+// Function to check if a value exists in an array
+bool value_exists(int value, uint8_t array[], int arraySize) {
+  for (int i = 0; i < arraySize; i++) {
+    if (array[i] == value) {
+      return true;
+    }
+  }
+  return false;
+}
