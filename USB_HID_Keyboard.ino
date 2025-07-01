@@ -17,7 +17,7 @@
 * be modified as some of the other Arduinos (eg. Uno) would do
 * -------------------------------------------------------------------------
 */
-#define DEBUG
+//#define DEBUG
 
 // ST keyboard reset pin
 const int ST_KB_RESET = 4;
@@ -61,47 +61,27 @@ const uint8_t ARD_F10 = 0xCB;
 const uint8_t ARD_F11 = 0xCC;
 const uint8_t ARD_F12 = 0xCD;
 
-/*
-const uint8_t MOUSE_BUTTON_STATUS_NONE = 120;
-const uint8_t MOUSE_BUTTON_STATUS_LEFT = 122;
-const uint8_t MOUSE_BUTTON_STATUS_RIGHT = 121;
-const uint8_t MOUSE_BUTTON_STATUS_BOTH = 123;
-
-const uint8_t MOUSE_DIR_LEFT = 1;
-const uint8_t MOUSE_DIR_RIGHT = 127;
-const uint8_t MOUSE_DIR_DOWN = 1;
-const uint8_t MOUSE_DIR_UP = 127;
-
-const uint8_t JOYSTICK_DIRECTION = 127;
-const uint8_t JOYSTICK_LEFT = 4;
-const uint8_t JOYSTICK_RIGHT = 8;
-const uint8_t JOYSTICK_DOWN = 2;
-const uint8_t JOYSTICK_UP = 1;
-const uint8_t JOYSTICK_UP_LEFT = 3;
-const uint8_t JOYSTICK_UP_RIGHT = 3;
-const uint8_t JOYSTICK_DOWN_LEFT = 3;
-const uint8_t JOYSTICK_DOWN_RIGHT = 3;
-*/
-
 const uint8_t MOUSE_BUTTON_STATUS_NONE = 0x78;
-const uint8_t MOUSE_BUTTON_STATUS_LEFT = 0x79;
-const uint8_t MOUSE_BUTTON_STATUS_RIGHT = 0x7a;
+const uint8_t MOUSE_BUTTON_STATUS_LEFT = 0x7a;
+const uint8_t MOUSE_BUTTON_STATUS_RIGHT = 0x79;
 const uint8_t MOUSE_BUTTON_STATUS_BOTH = 0x7b;
 
-const uint8_t MOUSE_DIR_LEFT = 0x01;
-const uint8_t MOUSE_DIR_RIGHT = 0x7f;
+const uint8_t MOUSE_DIR_LEFT = 0x7f;
+const uint8_t MOUSE_DIR_RIGHT = 0x01;
 const uint8_t MOUSE_DIR_DOWN = 0x01;
 const uint8_t MOUSE_DIR_UP = 0x7f;
+const uint8_t MOUSE_AXIS_MIN = 0x01;
+const uint8_t MOUSE_AXIS_MAX = 0x7f;
 
 const uint8_t JOYSTICK_DIRECTION = 0x7f;
 const uint8_t JOYSTICK_LEFT = 0x04;
 const uint8_t JOYSTICK_RIGHT = 0x08;
 const uint8_t JOYSTICK_DOWN = 0x02;
 const uint8_t JOYSTICK_UP = 0x01;
-const uint8_t JOYSTICK_UP_LEFT = 0x03;
-const uint8_t JOYSTICK_UP_RIGHT = 0x03;
-const uint8_t JOYSTICK_DOWN_LEFT = 0x03;
-const uint8_t JOYSTICK_DOWN_RIGHT = 0x03;
+const uint8_t JOYSTICK_UP_LEFT = 0x05;
+const uint8_t JOYSTICK_UP_RIGHT = 0x09;
+const uint8_t JOYSTICK_DOWN_LEFT = 0x06;
+const uint8_t JOYSTICK_DOWN_RIGHT = 0x0a;
 
 uint8_t mouse_button_actions[] = {
   MOUSE_BUTTON_STATUS_NONE,
@@ -117,11 +97,16 @@ const int MOUSE_STEP_Y = 3;
 const int JOYSTICK_1_ID = 1;
 const int JOYSTICK_2_ID = 2;
 
-int mouse_speed = 15;
+int mouse_speed = 15; // This seems to work well with original ST mouse but third party mice seem to run faster
 int mouse_step = 0;
+int mouse_left_button_state = LOW;
+int mouse_right_button_state = HIGH;
 bool joystick_direction = false;
 int joystick1_button_state = LOW;
 int joystick2_button_state = LOW;
+int joystick2_x_state = 0;
+int joystick2_y_state = 0;
+bool enable_dual_joystick = false; // Not fully implemeneted so set to false for now
 
 // Keyboard auto-repeat
 static uint8_t last_make;    // Last make char
@@ -255,7 +240,7 @@ uint8_t scanCodes[] =
   0xE0  // NEnter
 };
 
-// Create two joystick objects
+// Create first joystick object
 Joystick_ Joystick1(JOYSTICK_1_ID,JOYSTICK_TYPE_GAMEPAD,
   1, 0,                  // Button Count, Hat Switch Count
   true, true, false,     // X and Y, but no Z Axis
@@ -264,24 +249,39 @@ Joystick_ Joystick1(JOYSTICK_1_ID,JOYSTICK_TYPE_GAMEPAD,
   false, false, false);  // No accelerator, brake, or steering
 
 Joystick_ Joystick2(JOYSTICK_2_ID,JOYSTICK_TYPE_GAMEPAD,
-  1, 0,                  // Button Count, Hat Switch Count
-  true, true, false,     // X and Y, but no Z Axis
-  false, false, false,   // No Rx, Ry, or Rz
-  false, false,          // No rudder or throttle
-  false, false, false);  // No accelerator, brake, or steering
+    1, 0,                  // Button Count, Hat Switch Count
+    true, true, false,     // X and Y, but no Z Axis
+    false, false, false,   // No Rx, Ry, or Rz
+    false, false,          // No rudder or throttle
+    false, false, false);  // No accelerator, brake, or steering
 
 void setup(void)
 {
   // Initialize keyboard:
   Keyboard.begin();
   
+  // Initialise Mouse Library
+  Mouse.begin();
+
+  // Initialise Joystick Library
+  Joystick1.begin();
+  Joystick1.setXAxisRange(-1, 1);
+  Joystick1.setYAxisRange(-1, 1);
+
+  // Create second joystick if enabled
+  if (enable_dual_joystick) {
+    Joystick2.begin();
+    Joystick2.setXAxisRange(-1, 1);
+    Joystick2.setYAxisRange(-1, 1);
+  }
+
   // Open serial port from Atari keyboard
   Serial1.begin(7812);
 
-#ifdef DEBUG
-  // Open serial port to PC
-  Serial.begin(9600);
-#endif
+  #ifdef DEBUG
+    // Open serial port to PC
+    Serial.begin(9600);
+  #endif
   
   // Reset ST keyboard
   delay(200);
@@ -316,9 +316,11 @@ void reset_st_keyboard(void)
 
 void process_action(uint8_t action)
 {
-  Serial.print("action: ");
-  Serial.println(action & 0x7f);
-  //return;
+  #ifdef DEBUG
+    Serial.print("action: ");
+    Serial.println(action & 0x7f);
+    //return;
+  #endif
 
   // handle mouse actions
   if (mouse_step == 0 && value_exists((action & 0x7f), mouse_button_actions, 4)) {
@@ -329,54 +331,111 @@ void process_action(uint8_t action)
   } else if ((action & 0x7f) == JOYSTICK_DIRECTION) {
     joystick_direction = true;
   } else if (joystick_direction) {  
-    process_joystick_direction((action & 0x7f));
+    process_joystick_direction(JOYSTICK_1_ID, (action & 0x7f));
   // Otherwise it's a key
   } else {
-    Serial.println("key is pressed");
-
+    #ifdef DEBUG
+      Serial.println("key is pressed");
+    #endif
     process_keypress(action);
   }
 }
 
 void process_mouse(uint8_t value)
 {
-  Serial.print("Mouse step: ");
-  Serial.println(mouse_step);
+  #ifdef DEBUG
+    Serial.print("Mouse step: ");
+    Serial.println(mouse_step);
+  #endif
+
   switch (mouse_step) {
     case MOUSE_STEP_BUTTON:
-      Serial.print("Button status: ");
-      Serial.println(value);
+      if (value == MOUSE_BUTTON_STATUS_NONE) {
+        if (mouse_left_button_state == HIGH) {
+          Mouse.release(MOUSE_LEFT);
+          mouse_left_button_state = LOW;
+        }
+
+        if (mouse_right_button_state == HIGH) {
+          Mouse.release(MOUSE_RIGHT);
+          mouse_right_button_state = LOW;
+        }
+      }
+
+      if (value == MOUSE_BUTTON_STATUS_LEFT) {
+        if (mouse_right_button_state == HIGH) {
+          Mouse.release(MOUSE_RIGHT);
+          mouse_right_button_state = LOW;
+        }
+      }
+
+      if (value == MOUSE_BUTTON_STATUS_LEFT || value == MOUSE_BUTTON_STATUS_BOTH) {
+        if (mouse_left_button_state == LOW) {
+          Mouse.press(MOUSE_LEFT);
+          mouse_left_button_state = HIGH;
+        }
+      }
+
+      if (value == MOUSE_BUTTON_STATUS_RIGHT) {
+        if (mouse_left_button_state == HIGH) {
+          Mouse.release(MOUSE_LEFT);
+          mouse_left_button_state = LOW;
+        }
+      }
+
       if (value == MOUSE_BUTTON_STATUS_RIGHT || value == MOUSE_BUTTON_STATUS_BOTH) {
-        Serial.println("Send Joystick fire");
-        handle_joystick_button(1, value);
+        if (mouse_right_button_state == LOW) {
+          Mouse.press(MOUSE_RIGHT);
+          mouse_right_button_state = HIGH;
+        }
+        //Serial.println("Handle Joystick fire");
+      }
+
+      // Handle joystick
+      handle_joystick_button(JOYSTICK_1_ID, value);
+      if (enable_dual_joystick) {
+        handle_joystick_button(JOYSTICK_2_ID, value);
       }
       mouse_step = MOUSE_STEP_X;
       break;
 
     case MOUSE_STEP_X:
-      Serial.print("X movement: ");
-      Serial.println(value);
+      #ifdef DEBUG
+        Serial.print("X movement: ");
+        Serial.println(value);
+      #endif
+
       if (value == MOUSE_DIR_LEFT) {
-        Serial.println("Mouse left");
+        //Serial.println("Mouse left");
         Mouse.move(-mouse_speed, 0);
       } else if (value == MOUSE_DIR_RIGHT) {
-        Serial.println("Mouse right");
+        //Serial.println("Mouse right");
         Mouse.move(mouse_speed, 0);
+      }
+      if (enable_dual_joystick) {
+        joystick2_y_state = value;
       }
       mouse_step = MOUSE_STEP_Y;
       break;
 
     case MOUSE_STEP_Y:
-      Serial.print("Y movement: ");
-      Serial.println(value);
+      #ifdef DEBUG
+        Serial.print("Y movement: ");
+        Serial.println(value);
+      #endif
+      
       if (value == MOUSE_DIR_DOWN) {
-        Serial.println("Mouse down");
-        Mouse.move(0, -mouse_speed);
+        //Serial.println("Mouse down");
+        Mouse.move(0, mouse_speed);
       } else if (value == MOUSE_DIR_UP) {
-        Serial.println("Mouse up");
+        //Serial.println("Mouse up");
         Mouse.move(0, -mouse_speed);
       }
       mouse_step = 0;
+      if (enable_dual_joystick) {
+        joystick2_x_state = value;
+        process_joystick_direction(JOYSTICK_2_ID, value);
+      }
       break;
   }
 }
@@ -387,42 +446,147 @@ void handle_joystick_button(int joystick_id, uint8_t value)
     case JOYSTICK_1_ID:
       if (joystick1_button_state == HIGH) {
         if (value == MOUSE_BUTTON_STATUS_NONE || value == MOUSE_BUTTON_STATUS_LEFT) {
+          Serial.println("Joystick 1 button up");
           // Send button release
           Joystick1.setButton(0, LOW);
           joystick1_button_state = LOW;
         }
       } else {
         if (value == MOUSE_BUTTON_STATUS_BOTH || value == MOUSE_BUTTON_STATUS_RIGHT) {
+          Serial.println("Joystick 1 button down");
           // Send button press
           Joystick1.setButton(0, HIGH);
           joystick1_button_state = HIGH;
         }
       }
       break;
+
+    case JOYSTICK_2_ID:
+      //Serial.print("Joystick 2 button state: ");
+      //Serial.println(value);
+      // TODO
+      break;
   }
 }
 
-void process_joystick_direction(uint8_t value)
+void process_joystick_direction(int joystick_id, uint8_t value)
 {
-  switch (value) {
-    case JOYSTICK_LEFT:
-      Serial.println("Joystick left");
+  switch (joystick_id) {
+    case JOYSTICK_1_ID:
+      switch (value) {
+        case JOYSTICK_LEFT:
+          #ifdef DEBUG
+            Serial.println("Joystick left");
+          #endif
+          Joystick1.setXAxis(-1);
+          Joystick1.setYAxis(0);
+          break;
+
+        case JOYSTICK_RIGHT:
+          #ifdef DEBUG
+            Serial.println("Joystick right");
+          #endif
+          Joystick1.setXAxis(1);
+          Joystick1.setYAxis(0);
+          break;
+
+        case JOYSTICK_UP:
+          #ifdef DEBUG
+            Serial.println("Joystick up");
+          #endif
+          Joystick1.setXAxis(0);
+          Joystick1.setYAxis(-1);
+          break;
+
+        case JOYSTICK_DOWN:
+          #ifdef DEBUG
+            Serial.println("Joystick down");
+          #endif
+          Joystick1.setXAxis(0);
+          Joystick1.setYAxis(1);
+          break;
+
+        case JOYSTICK_UP_LEFT:
+          #ifdef DEBUG
+            Serial.println("Joystick up left");
+          #endif
+          Joystick1.setXAxis(-1);
+          Joystick1.setYAxis(-1);
+          break;
+
+        case JOYSTICK_UP_RIGHT:
+          #ifdef DEBUG
+            Serial.println("Joystick up right");
+          #endif
+          Joystick1.setXAxis(1);
+          Joystick1.setYAxis(-1);
+          break;
+
+        case JOYSTICK_DOWN_LEFT:
+          #ifdef DEBUG
+            Serial.println("Joystick down left");
+          #endif
+          Joystick1.setXAxis(-1);
+          Joystick1.setYAxis(1);
+          break;
+
+        case JOYSTICK_DOWN_RIGHT:
+          #ifdef DEBUG
+            Serial.println("Joystick down right");
+          #endif
+          Joystick1.setXAxis(1);
+          Joystick1.setYAxis(1);
+          break;
+
+        default:
+          Joystick1.setXAxis(0);
+          Joystick1.setYAxis(0);
+          break;
+      }
+      joystick_direction = false;
       break;
 
-    case JOYSTICK_RIGHT:
-      Serial.println("Joystick right");
-      break;
+    case JOYSTICK_2_ID:
+      #ifdef DEBUG
+        Serial.print("Joystick 2 x: ");
+        Serial.print(joystick2_x_state);
+        Serial.print(", y: ");
+        Serial.println(joystick2_y_state);
+      #endif
 
-    case JOYSTICK_UP:
-      Serial.println("Joystick up");
-      break;
+      // TODO not currently working
+      int xAxis = 0;
+      int yAxis = 0;
 
-    case JOYSTICK_DOWN:
-      Serial.println("Joystick down");
+      // Set X-axis
+      if (joystick2_x_state) {
+        // Left or right
+        if (joystick2_x_state == MOUSE_AXIS_MIN) {
+          //Serial.println("value");
+          xAxis = 1;
+        } else if (joystick2_x_state == MOUSE_AXIS_MAX) {
+          xAxis = -1;
+        }
+
+      // Set Y-axis
+      } else if (joystick2_y_state) {
+        // Up or down
+        if (joystick2_y_state == MOUSE_AXIS_MIN) {
+          //Serial.println("value");
+          yAxis = 1;
+        } else if (joystick2_y_state == MOUSE_AXIS_MAX) {
+          yAxis = -1;
+        }
+      }
+      
+      Joystick2.setXAxis(xAxis);
+      Joystick2.setYAxis(yAxis);
+
+      joystick2_x_state = 0;
+      joystick2_y_state = 0;
       break;
   }
-
-  joystick_direction = false;
+  
 }
 
 // Process each keypress
@@ -456,16 +620,16 @@ void convert_scancode(uint8_t key)
   uint8_t pc_code = scanCodes[key & 0x7f];
   uint8_t escaped = (pc_code == 0xe0 ? true:false);
   
-#ifdef DEBUG
-    Serial.print("Atari scancode: ");
-    Serial.println(key, DEC);
-    Serial.print("PC scancode: ");
-    Serial.println(pc_code, DEC);
-    Serial.print("Break code: ");
-    Serial.println(break_code, DEC);
-    Serial.print("Escaped: ");
-    Serial.println(escaped, DEC);
-#endif
+  #ifdef DEBUG
+      Serial.print("Atari scancode: ");
+      Serial.println(key, DEC);
+      Serial.print("PC scancode: ");
+      Serial.println(pc_code, DEC);
+      Serial.print("Break code: ");
+      Serial.println(break_code, DEC);
+      Serial.print("Escaped: ");
+      Serial.println(escaped, DEC);
+  #endif
   
   // Handle modifier key presses
   if (process_modifier(key)) return;
